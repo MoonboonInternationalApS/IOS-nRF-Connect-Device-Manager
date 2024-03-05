@@ -16,13 +16,6 @@ import SwiftCBOR
  */
 public typealias McuSequenceNumber = UInt8
 
-extension McuSequenceNumber {
-    
-    static func random() -> McuSequenceNumber {
-        McuSequenceNumber.random(in: UInt8.min...UInt8.max)
-    }
-}
-
 open class McuManager {
     class var TAG: McuMgrLogCategory { .default }
     
@@ -66,10 +59,9 @@ open class McuManager {
     
     // MARK: Private
     
-    private var smpVersion: McuMgrVersion = .SMPv2
-    
-    /// Each 'send' command gets its own Sequence Number to begin with.
-    private var nextSequenceNumber: McuSequenceNumber = .random()
+    /// Each 'send' command gets its own Sequence Number, which we rotate
+    /// within the bounds of an unsigned UInt8 [0...255].
+    private var nextSequenceNumber: McuSequenceNumber = 0
     
     /**
      Sequence Number Response ReOrder Buffer
@@ -99,29 +91,29 @@ open class McuManager {
                                                              commandId: R, payload: [String:CBOR]?,
                                                              timeout: Int = DEFAULT_SEND_TIMEOUT_SECONDS,
                                                              callback: @escaping McuMgrCallback<T>) where R.RawValue == UInt8 {
-        log(msg: "Sending \(op) command (Version: \(smpVersion), Group: \(group), seq: \(nextSequenceNumber), ID: \(commandId)): \(payload?.debugDescription ?? "nil")",
+        log(msg: "Sending \(op) command (Group: \(group), seq: \(nextSequenceNumber), ID: \(commandId)): \(payload?.debugDescription ?? "nil")",
             atLevel: .verbose)
         let packetSequenceNumber = nextSequenceNumber
-        let packetData = McuManager.buildPacket(scheme: transporter.getScheme(), version: smpVersion,
-                                                op: op, flags: flags, group: group.rawValue,
+        let packetData = McuManager.buildPacket(scheme: transporter.getScheme(), op: op,
+                                                flags: flags, group: group.uInt16Value,
                                                 sequenceNumber: packetSequenceNumber,
                                                 commandId: commandId, payload: payload)
         let _callback: McuMgrCallback<T> = { [weak self] (response, error) -> Void in
-            guard let self else {
+            guard let self = self else {
                 callback(response, error)
                 return
             }
             
             do {
-                guard try self.robBuffer.received((response, error), for: packetSequenceNumber) else { return }
+                guard try self.robBuffer.receivedInOrder((response, error), for: packetSequenceNumber) else { return }
                 try self.robBuffer.deliver { responseSequenceNumber, response in
                     let responseResult = response as? (T?, (any Error)?)
+                    
                     if let response = responseResult?.0 {
-                        self.smpVersion = McuMgrVersion(rawValue: response.header.version) ?? .SMPv1
-                        self.log(msg: "Response (\(self.smpVersion), group: \(self.group), seq: \(responseSequenceNumber), command: \(commandId)): \(response)",
+                        self.log(msg: "Response (Group: \(self.group), seq: \(responseSequenceNumber), ID: \(response.header!.commandId!)): \(response)",
                                  atLevel: .verbose)
                     } else if let error = responseResult?.1 {
-                        self.log(msg: "Request (\(self.smpVersion), group: \(self.group), seq: \(responseSequenceNumber), command: \(commandId)) failed: \(error.localizedDescription)",
+                        self.log(msg: "Request (Group: \(self.group), seq: \(responseSequenceNumber)) failed: \(error.localizedDescription))",
                                  atLevel: .error)
                     }
                     callback(responseResult?.0, responseResult?.1)
@@ -133,11 +125,9 @@ open class McuManager {
             }
         }
         
-        robBuffer.logDelegate = logDelegate
-        robBuffer.enqueueExpectation(for: packetSequenceNumber)
+        robBuffer.expectingValue(for: packetSequenceNumber)
         send(data: packetData, timeout: timeout, callback: _callback)
-        // Use of Overflow operator
-        nextSequenceNumber = nextSequenceNumber &+ 1
+        rotateSequenceNumber()
     }
     
     public func send<T: McuMgrResponse>(data: Data, timeout: Int, callback: @escaping McuMgrCallback<T>) {
@@ -151,7 +141,6 @@ open class McuManager {
     /// Build a McuManager request packet based on the transporter scheme.
     ///
     /// - parameter scheme: The transport scheme.
-    /// - parameter version: The SMP Version.
     /// - parameter op: The McuManagerOperation code.
     /// - parameter flags: The optional flags.
     /// - parameter group: The command group.
@@ -160,9 +149,7 @@ open class McuManager {
     /// - parameter payload: The request payload.
     ///
     /// - returns: The raw packet data to send to the transporter.
-    public static func buildPacket<R: RawRepresentable>(scheme: McuMgrScheme,
-                                                        version: McuMgrVersion,
-                                                        op: McuMgrOperation,
+    public static func buildPacket<R: RawRepresentable>(scheme: McuMgrScheme, op: McuMgrOperation,
                                                         flags: UInt8, group: UInt16,
                                                         sequenceNumber: McuSequenceNumber,
                                                         commandId: R, payload: [String:CBOR]?) -> Data where R.RawValue == UInt8 {
@@ -178,8 +165,8 @@ open class McuManager {
         let len: UInt16 = UInt16(CBOR.encode(payloadCopy).count)
         
         // Build header.
-        let header = McuMgrHeader.build(version: version.rawValue, op: op.rawValue, flags: flags,
-                                        len: len, group: group, seq: sequenceNumber,
+        let header = McuMgrHeader.build(op: op.rawValue, flags: flags, len: len,
+                                        group: group, seq: sequenceNumber,
                                         id: commandId.rawValue)
         
         // Build the packet based on scheme.
@@ -210,9 +197,9 @@ open class McuManager {
     ///
     /// - parameter date: The date.
     /// - parameter timeZone: Optional timezone for the given date. If left out
-    ///   or nil, the timezone will be set to the system time zone.
+    ///   or nil, the timzone will be set to the system time zone.
     ///
-    /// - returns: The date-time string.
+    /// - returns: The datetime string.
     public static func dateToString(date: Date, timeZone: TimeZone? = nil) -> String {
         let RFC3339DateFormatter = DateFormatter()
         RFC3339DateFormatter.locale = Locale(identifier: "en_US_POSIX")
@@ -228,7 +215,7 @@ open class McuManager {
             throw McuManagerError.mtuValueOutsideOfValidRange(mtu)
         }
         guard self.mtu != mtu else {
-            throw McuManagerError.mtuValueHasNotChanged(mtu)
+            throw McuManagerError.mtuValueHasNotchanged(mtu)
         }
         
         self.mtu = mtu
@@ -263,9 +250,11 @@ open class McuManager {
 extension McuManager {
     
     func log(msg: @autoclosure () -> String, atLevel level: McuMgrLogLevel) {
-        if let logDelegate, level >= logDelegate.minLogLevel() {
-            logDelegate.log(msg(), ofCategory: Self.TAG, atLevel: level)
-        }
+        logDelegate?.log(msg(), ofCategory: Self.TAG, atLevel: level)
+    }
+    
+    private func rotateSequenceNumber() {
+        nextSequenceNumber = nextSequenceNumber == .max ? 0 : nextSequenceNumber + 1
     }
 }
 
@@ -278,20 +267,14 @@ public typealias McuMgrCallback<T: McuMgrResponse> = (T?, Error?) -> Void
 public enum McuManagerError: Error, LocalizedError {
     
     case mtuValueOutsideOfValidRange(_ newValue: Int)
-    case mtuValueHasNotChanged(_ newValue: Int)
-    case returnCode(_ rc: McuMgrReturnCode)
-    case returnCodeValue(_ rc: UInt64)
+    case mtuValueHasNotchanged(_ newValue: Int)
     
     public var errorDescription: String? {
         switch self {
         case .mtuValueOutsideOfValidRange(let newMtu):
             return "New MTU Value \(newMtu) is outside valid range of \(McuManager.ValidMTURange.lowerBound)...\(McuManager.ValidMTURange.upperBound)"
-        case .mtuValueHasNotChanged(let newMtu):
-            return "MTU Value already set to \(newMtu)"
-        case .returnCode(let rc):
-            return "Remote Error: \(rc)"
-        case .returnCodeValue(let code):
-            return "Remote Error: \(code)"
+        case .mtuValueHasNotchanged(let newMtu):
+            return "MTU Value already set to \(newMtu)."
         }
     }
 }
@@ -302,53 +285,43 @@ public enum McuManagerError: Error, LocalizedError {
 ///
 /// Each group has its own manager class which contains the specific subcommands
 /// and functions. The default are contained within the McuManager class.
-public enum McuMgrGroup: UInt16 {
+public enum McuMgrGroup {
     /// Default command group (DefaultManager).
-    case OS = 0
+    case `default`
     /// Image command group (ImageManager).
-    case image = 1
+    case image
     /// Statistics command group (StatsManager).
-    case statistics = 2
-    /// System configuration command group (SettingsManager).
-    case settings = 3
+    case stats
+    /// System configuration command group (ConfigManager).
+    case config
     /// Log command group (LogManager).
-    case logs = 4
+    case logs
     /// Crash command group (CrashManager).
-    case crash = 5
+    case crash
     /// Split image command group (Not implemented).
-    case split = 6
+    case split
     /// Run test command group (RunManager).
-    case run = 7
+    case run
     /// File System command group (FileSystemManager).
-    case filesystem = 8
-    /// Shell Command Group (ShellManager).
-    case shell = 9
+    case fs
+    /// Basic command group (BasicManager).
+    case basic
     /// Per user command group, value must be >= 64.
-    case perUser = 64
+    case peruser(value: UInt16)
     
-    /** 
-     * Basic command group (BasicManager).
-     *
-     * Zephyr-specific groups decrease from PERUSER to avoid collision with upstream and
-     * user-defined groups.
-     */
-    case basic = 63 // PerUser - 1
-}
-
-// MARK: - McuMgrVersion
-
-/// The mcu manager operation defines whether the packet sent is a read/write
-/// and request/response.
-public enum McuMgrVersion: UInt8, CustomDebugStringConvertible {
-    case SMPv1 = 0
-    case SMPv2 = 1
-    
-    public var debugDescription: String {
+    var uInt16Value: UInt16 {
         switch self {
-        case .SMPv1:
-            return "SMPv1"
-        case .SMPv2:
-            return "SMPv2"
+        case .default: return 0
+        case .image: return 1
+        case .stats: return 2
+        case .config: return 3
+        case .logs: return 4
+        case .crash: return 5
+        case .split: return 6
+        case .run: return 7
+        case .fs: return 8
+        case .basic: return 63
+        case .peruser(let value): return value
         }
     }
 }
@@ -362,72 +335,6 @@ public enum McuMgrOperation: UInt8 {
     case readResponse   = 1
     case write          = 2
     case writeResponse  = 3
-}
-
-public enum McuMgrError: Error, LocalizedError {
-    case returnCode(_ rc: McuMgrReturnCode)
-    case groupCode(_ group: McuMgrGroupReturnCode)
-    
-    public var errorDescription: String? {
-        switch self {
-        case .returnCode(let rc):
-            return rc.description
-        case .groupCode(let groupCode):
-            return groupCode.groupError()?.errorDescription
-        }
-    }
-}
-
-public class McuMgrGroupReturnCode: CBORMappable {
-    
-    public var group: UInt64 = 0
-    
-    public var rc: UInt64 = 0
-    
-    public required init(cbor: CBOR?) throws {
-        try super.init(cbor: cbor)
-        if case let CBOR.unsignedInt(group)? = cbor?["group"] {
-            self.group = group
-        }
-        if case let CBOR.unsignedInt(rc)? = cbor?["rc"] {
-            self.rc = rc
-        }
-    }
-    
-    public init(map: [CBOR: CBOR]) throws {
-        try super.init(cbor: nil)
-        if case let CBOR.unsignedInt(group)? = map["group"] {
-            self.group = group
-        }
-        if case let CBOR.unsignedInt(rc)? = map["rc"] {
-            self.rc = rc
-        }
-    }
-    
-    public func groupError() -> LocalizedError? {
-        guard rc != 0 else { return nil }
-        
-        let error: LocalizedError?
-        switch McuMgrGroup(rawValue: UInt16(group)) {
-        case .OS:
-            error = OSManagerError(rawValue: rc)
-        case .image:
-            error = ImageManagerError(rawValue: rc)
-        case .statistics:
-            error = StatsManagerError(rawValue: rc)
-        case .settings:
-            error = SettingsManagerError(rawValue: rc)
-        case .filesystem:
-            error = FileSystemManagerError(rawValue: rc)
-        case .basic:
-            error = BasicManagerError(rawValue: rc)
-        default:
-            // Passthrough to McuMgr 'RC' Errors for Unknown
-            // or Unsupported values.
-            error = McuManagerError.returnCodeValue(rc)
-        }
-        return error ?? McuManagerError.returnCodeValue(rc)
-    }
 }
 
 // MARK: - McuMgrReturnCode
@@ -449,7 +356,6 @@ public enum McuMgrReturnCode: UInt64, Error {
     case corruptPayload    = 9
     case busy              = 10
     case accessDenied      = 11
-    
     case unrecognized
     
     public func isSuccess() -> Bool {
@@ -466,42 +372,31 @@ extension McuMgrReturnCode: CustomStringConvertible {
     public var description: String {
         switch self {
         case .ok:
-            return "OK"
+            return "OK (RC: \(rawValue))"
         case .unknown:
-            return "Unknown error"
+            return "Unknown (RC: \(rawValue))"
         case .noMemory:
-            return "No memory"
+            return "No Memory (RC: \(rawValue))"
         case .inValue:
-            return "Invalid value"
+            return "In Value (RC: \(rawValue))"
         case .timeout:
-            return "Timeout"
+            return "Timeout (RC: \(rawValue))"
         case .noEntry:
-            return "No entry" // For Filesystem Operations, Does Your Mounting Point Match Your Target Firmware / Device?
+            return "No Entry (RC: \(rawValue)). For Filesystem Operations, Does Your Mounting Point Match Your Target Firmware / Device?"
         case .badState:
-            return "Bad state"
+            return "Bad State (RC: \(rawValue))"
         case .responseIsTooLong:
-            return "Response is too long"
+            return "Response is Too Long (RC: \(rawValue))"
         case .unsupported:
-            return "Not supported"
+            return "Not Supported (RC: \(rawValue)). Requested Group ID or Command ID May Not Supported by This Application."
         case .corruptPayload:
-            return "Corrupt payload"
+            return "Corrupt Payload (RC: \(rawValue))"
         case .busy:
-            return "Busy, try again later" // Busy processing previous SMP Request
+            return "Busy Processing Previous SMP Request (RC: \(rawValue)). Wait and Try Later."
         case .accessDenied:
-            return "Access denied" // Are You Trying to Downgrade to a Lower Image Version?
+            return "Access Denied (RC: \(rawValue)). Are You Trying to Downgrade to a Lower Image Version?"
         default:
             return "Unrecognized (RC: \(rawValue))"
         }
     }
-}
-
-extension McuMgrReturnCode: CustomDebugStringConvertible {
-    
-    public var debugDescription: String {
-        if case .unrecognized = self {
-            return description
-        }
-        return "\(description) (RC: \(rawValue))"
-    }
-    
 }

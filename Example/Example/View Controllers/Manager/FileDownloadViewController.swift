@@ -52,6 +52,8 @@ class FileDownloadViewController: UIViewController, McuMgrViewController {
             fsManager.logDelegate = UIApplication.shared.delegate as? McuMgrLogDelegate
         }
     }
+    var height: CGFloat = 80
+    var tableView: UITableView!
     
     private var fsManager: FileSystemManager!
     private var partition: String {
@@ -65,16 +67,11 @@ class FileDownloadViewController: UIViewController, McuMgrViewController {
     }
     
     override func viewDidLoad() {
-        super.viewDidLoad()
-        
         let recents = UserDefaults.standard.array(forKey: recentsKey)
         actionOpenRecents.isEnabled = recents != nil
-        view.translatesAutoresizingMaskIntoConstraints = false
     }
     
     override func viewDidAppear(_ animated: Bool) {
-        super.viewDidAppear(animated)
-        
         refreshSource()
     }
     
@@ -97,16 +94,16 @@ extension FileDownloadViewController: FileDownloadDelegate {
     func downloadDidFail(with error: Error) {
         fileName.textColor = .systemRed
         switch error as? FileTransferError {
-        // TODO: Fix by attempting to check specific Errors from FilesystemError.
-//        case .mcuMgrErrorCode(.unknown):
-//            fileName.text = "File not found"
+        case .mcuMgrErrorCode(.unknown):
+            fileName.text = "File not found"
         default:
-            fileName.text = error.localizedDescription
+            fileName.text = "\(error.localizedDescription)"
         }
         fileContent.text = nil
         progress.setProgress(0, animated: true)
         
-        (parent as! FilesController).innerViewReloaded()
+        height = 146
+        tableView.reloadData()
     }
     
     func downloadDidCancel() {
@@ -119,6 +116,9 @@ extension FileDownloadViewController: FileDownloadDelegate {
         fileContent.text = String(data: data, encoding: .utf8)
         progress.setProgress(0, animated: false)
         
-        (parent as! FilesController).innerViewReloaded()
+        let bounds = CGSize(width: fileContent.frame.width, height: CGFloat.greatestFiniteMagnitude)
+        let rect = fileContent.sizeThatFits(bounds)
+        height = 146 + rect.height
+        tableView.reloadData()
     }
 }

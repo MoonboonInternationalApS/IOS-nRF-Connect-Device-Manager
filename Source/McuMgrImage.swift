@@ -6,8 +6,6 @@
 
 import Foundation
 
-// MARK: - McuMgrImage
-
 public class McuMgrImage {
     
     public static let IMG_HASH_LEN = 32
@@ -19,23 +17,11 @@ public class McuMgrImage {
     
     public init(data: Data) throws {
         self.data = data
-        let header = try McuMgrImageHeader(data: data)
-        self.header = header
-        let offset = Int(header.headerSize) + Int(header.imageSize)
-        var tlv = try McuMgrImageTlv(data: data, imageHeader: header, at: offset)
-        if let info = tlv.tlvInfo, info.isProtected {
-            tlv = try McuMgrImageTlv(data: data, imageHeader: header, at: offset + Int(info.total))
-        }
-        self.tlv = tlv
-        if let hash = tlv.hash {
-            self.hash = hash
-        } else {
-            throw McuMgrImageParseError.hashNotFound
-        }
+        self.header = try McuMgrImageHeader(data: data)
+        self.tlv = try McuMgrImageTlv(data: data, imageHeader: header)
+        self.hash = tlv.hash
     }
 }
-
-// MARK: - McuMgrImageHeader
 
 public class McuMgrImageHeader {
     
@@ -76,8 +62,6 @@ public class McuMgrImageHeader {
     }
 }
 
-// MARK: - McuMgrImageVersion
-
 public class McuMgrImageVersion {
     
     public static let VERSION_OFFSET = 20
@@ -95,48 +79,33 @@ public class McuMgrImageVersion {
     }
 }
 
-// MARK: - McuMgrImageTlv
-
-public struct McuMgrImageTlv {
+public class McuMgrImageTlv {
     
-    public static let IMG_TLV_SHA256_V1: UInt8 = 0x01
     public static let IMG_TLV_SHA256: UInt8 = 0x10
-    public static let IMG_TLV_RSA2048_PSS: UInt8 = 0x20
-    public static let IMG_TLV_ECDSA224: UInt8 = 0x21
-    public static let IMG_TLV_ECDSA256: UInt8 = 0x22
-    public static let IMG_TLV_RSA3072_PSS: UInt8 = 0x23
-    public static let IMG_TLV_ED25519: UInt8 = 0x24
-    public static let IMG_TLV_ENC_RSA2048: UInt8 = 0x30
-    public static let IMG_TLV_ENC_KW128: UInt8 = 0x31
-    public static let IMG_TLV_ENC_EC256: UInt8 = 0x32
-    public static let IMG_TLV_DEPENDENCY = 0x40
-    
-    public static let IMG_TLV_UNPROTECTED_INFO_MAGIC: UInt16 = 0x6907
-    public static let IMG_TLV_PROTECTED_INFO_MAGIC: UInt16 = 0x6908
+    public static let IMG_TLV_SHA256_V1: UInt8 = 0x01
+    public static let IMG_TLV_INFO_MAGIC: UInt16 = 0x6907
     
     public var tlvInfo: McuMgrImageTlvInfo?
     public var trailerTlvEntries: [McuMgrImageTlvTrailerEntry]
-    public var hash: Data?
     
-    public init(data: Data, imageHeader: McuMgrImageHeader, at offset: Int) throws {
-        var localOffset = offset
-        var end = data.count
+    public let hash: Data
+    
+    public init(data: Data, imageHeader: McuMgrImageHeader) throws {
+        var offset = Int(imageHeader.headerSize) + Int(imageHeader.imageSize)
+        let end = data.count
         
         // Parse the tlv info header (Not included in legacy version).
         if !imageHeader.isLegacy() {
-            let tlvInfo = try McuMgrImageTlvInfo(data: data, offset: localOffset)
-            localOffset += MemoryLayout<McuMgrImageTlvInfo>.size
-            end = localOffset + Int(tlvInfo.total)
-            self.tlvInfo = tlvInfo
+            try tlvInfo = McuMgrImageTlvInfo(data: data, offset: offset)
+            offset += McuMgrImageTlvInfo.SIZE
         }
         
         // Parse each tlv entry.
         trailerTlvEntries = [McuMgrImageTlvTrailerEntry]()
         var hashEntry: McuMgrImageTlvTrailerEntry?
-        while localOffset + McuMgrImageTlvTrailerEntry.MIN_SIZE < end {
-            let tlvEntry = try McuMgrImageTlvTrailerEntry(data: data, offset: localOffset)
+        while offset + McuMgrImageTlvTrailerEntry.MIN_SIZE < end {
+            let tlvEntry = try McuMgrImageTlvTrailerEntry(data: data, offset: offset)
             trailerTlvEntries.append(tlvEntry)
-            
             // Set the hash if this entry's type matches the hash's type
             if imageHeader.isLegacy() && tlvEntry.type == McuMgrImageTlv.IMG_TLV_SHA256_V1 ||
                 !imageHeader.isLegacy() && tlvEntry.type == McuMgrImageTlv.IMG_TLV_SHA256 {
@@ -144,37 +113,35 @@ public struct McuMgrImageTlv {
             }
             
             // Increment offset.
-            localOffset += tlvEntry.size
+            offset += tlvEntry.size
         }
         
-        hash = hashEntry?.value
+        // Set the hash. If not found, throw an error.
+        if let hashEntry = hashEntry {
+            hash = hashEntry.value
+        } else {
+            throw McuMgrImageParseError.hashNotFound
+        }
     }
 }
 
-// MARK: - McuMgrImageTlvInfo
-
 /// Represents the header which starts immediately after the image data and
 /// precedes the image trailer TLV.
-public struct McuMgrImageTlvInfo {
+public class McuMgrImageTlvInfo {
+    
+    public static let SIZE = 4
     
     public let magic: UInt16
     public let total: UInt16
     
     public init(data: Data, offset: Int) throws {
         magic = data.read(offset: offset)
-        total = data.read(offset: offset + MemoryLayout<UInt16>.size)
-        if magic != McuMgrImageTlv.IMG_TLV_UNPROTECTED_INFO_MAGIC
-            && magic != McuMgrImageTlv.IMG_TLV_PROTECTED_INFO_MAGIC {
+        total = data.read(offset: offset + 2)
+        if magic != McuMgrImageTlv.IMG_TLV_INFO_MAGIC {
             throw McuMgrImageParseError.invalidTlvInfoMagic
         }
     }
-    
-    public var isProtected: Bool {
-        magic == McuMgrImageTlv.IMG_TLV_PROTECTED_INFO_MAGIC
-    }
 }
-
-// MARK: - McuMgrImageTlvTrailerEntry
 
 /// Represents an entry in the image TLV trailer.
 public class McuMgrImageTlvTrailerEntry {
@@ -183,6 +150,7 @@ public class McuMgrImageTlvTrailerEntry {
     public static let MIN_SIZE = 4
     
     public let type: UInt8
+    // __pad: UInt8
     public let length: UInt16
     public let value: Data
     
@@ -196,18 +164,13 @@ public class McuMgrImageTlvTrailerEntry {
         
         var offset = offset
         type = data[offset]
-        // Advance 1 byte for read
-        offset += MemoryLayout<UInt8>.size
-        // Advance 1 byte for padding (MIN_SIZE = 4)
-        offset += MemoryLayout<UInt8>.size
+        offset += 2 // Increment offset and account for extra byte of padding.
         length = data.read(offset: offset)
-        offset += MemoryLayout<UInt16>.size
+        offset += 2 // Move offset past length.
         value = data[Int(offset)..<Int(offset + Int(length))]
         size = McuMgrImageTlvTrailerEntry.MIN_SIZE + Int(length)
     }
 }
-
-// MARK: - McuMgrImageParseError
 
 public enum McuMgrImageParseError: Error {
     case invalidHeaderMagic
@@ -215,8 +178,6 @@ public enum McuMgrImageParseError: Error {
     case insufficientData
     case hashNotFound
 }
-
-// MARK: - McuMgrImageParseError
 
 extension McuMgrImageParseError: LocalizedError {
     
@@ -232,4 +193,5 @@ extension McuMgrImageParseError: LocalizedError {
             return "Hash Not Found."
         }
     }
+    
 }

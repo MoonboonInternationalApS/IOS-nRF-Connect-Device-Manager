@@ -14,19 +14,17 @@ class FilesController: UITableViewController {
      */
     static let defaultPartition = "lfs1"
     
-    @IBOutlet weak var connectionStatus: UILabel!
-    @IBOutlet weak var mcuMgrParams: UILabel!
-    @IBOutlet weak var bootloaderName: UILabel!
-    @IBOutlet weak var bootloaderMode: UILabel!
-    @IBOutlet weak var kernel: UILabel!
+    @IBOutlet weak var connectionStatus: ConnectionStateLabel!
     
     var fileDownloadViewController: FileDownloadViewController!
     
     override func viewDidAppear(_ animated: Bool) {
         showPartitionControl()
         
-        let baseController = parent as? BaseViewController
-        baseController?.deviceStatusDelegate = self
+        // Set the connection status label as transport delegate.
+        let baseController = parent as! BaseViewController
+        let bleTransporter = baseController.transporter as? McuMgrBleTransport
+        bleTransporter?.delegate = connectionStatus
     }
     
     override func viewDidDisappear(_ animated: Bool) {
@@ -39,16 +37,18 @@ class FilesController: UITableViewController {
         
         var destination = segue.destination as? McuMgrViewController
         destination?.transporter = transporter
+        
+        if let controller = destination as? FileDownloadViewController {
+            fileDownloadViewController = controller
+            fileDownloadViewController.tableView = tableView
+        }
     }
     
     override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-        return UITableView.automaticDimension
-    }
-    
-    func innerViewReloaded() {
-        tableView.beginUpdates()
-        tableView.setNeedsDisplay()
-        tableView.endUpdates()
+        if indexPath.section == 2 /* Download */ {
+            return fileDownloadViewController.height
+        }
+        return super.tableView(tableView, heightForRowAt: indexPath)
     }
     
     // MARK: Partition settings
@@ -61,7 +61,7 @@ class FilesController: UITableViewController {
     
     @objc func presentPartitionSettings() {
         let alert = UIAlertController(title: "Settings",
-                                      message: "Specify the mount point,\ne.g. \"lfs1\" or \"nffs\":",
+                                      message: "Specify the mount point,\ne.g. \"lfs\" or \"nffs\":",
                                       preferredStyle: .alert)
         alert.addTextField { field in
             field.placeholder = "Partition"
@@ -90,28 +90,4 @@ class FilesController: UITableViewController {
         })
         present(alert, animated: true)
     }
-}
-
-extension FilesController: DeviceStatusDelegate {
-    
-    func connectionStateDidChange(_ state: PeripheralState) {
-        connectionStatus.text = state.description
-    }
-    
-    func bootloaderNameReceived(_ name: String) {
-        bootloaderName.text = name
-    }
-    
-    func bootloaderModeReceived(_ mode: BootloaderInfoResponse.Mode) {
-        bootloaderMode.text = mode.description
-    }
-    
-    func appInfoReceived(_ output: String) {
-        kernel.text = output
-    }
-    
-    func mcuMgrParamsReceived(buffers: Int, size: Int) {
-        mcuMgrParams.text = "\(buffers) x \(size) bytes"
-    }
-    
 }

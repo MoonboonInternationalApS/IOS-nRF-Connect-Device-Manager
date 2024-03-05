@@ -13,11 +13,7 @@ class DeviceController: UITableViewController, UITextFieldDelegate {
 
     // MARK: IBOutlet(s)
     
-    @IBOutlet weak var connectionStatus: UILabel!
-    @IBOutlet weak var mcuMgrParams: UILabel!
-    @IBOutlet weak var bootloaderName: UILabel!
-    @IBOutlet weak var bootloaderMode: UILabel!
-    @IBOutlet weak var kernel: UILabel!
+    @IBOutlet weak var connectionStatus: ConnectionStateLabel!
     @IBOutlet weak var actionSend: UIButton!
     @IBOutlet weak var message: UITextField!
     @IBOutlet weak var messageSent: UILabel!
@@ -60,17 +56,20 @@ class DeviceController: UITableViewController, UITextFieldDelegate {
     }
     
     override func viewDidAppear(_ animated: Bool) {
-        let baseController = parent as? BaseViewController
-        baseController?.deviceStatusDelegate = self
+        // Set the connection status label as transport delegate.
+        let bleTransporter = defaultManager.transporter as? McuMgrBleTransport
+        bleTransporter?.delegate = connectionStatus
+    }
+    
+    override func viewWillDisappear(_ animated: Bool) {
+        // Close the connection to allow other UIViewController(s) to do
+        // their own thing.
+        defaultManager.transporter.close()
     }
     
     func textFieldShouldReturn(_ textField: UITextField) -> Bool {
         sendTapped(actionSend)
         return true
-    }
-    
-    override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-        return UITableView.automaticDimension
     }
     
     // MARK: send
@@ -101,7 +100,7 @@ class DeviceController: UITableViewController, UITextFieldDelegate {
                     if let messageText = self?.messageSent.text {
                         self?.send(message: messageText)
                     }
-                } catch McuManagerError.mtuValueHasNotChanged {
+                } catch McuManagerError.mtuValueHasNotchanged {
                     // If MTU value did not change, try reassembly.
                     if let messageText = self?.messageSent.text,
                        let bleTransport = self?.defaultManager.transporter as? McuMgrBleTransport,
@@ -124,33 +123,9 @@ class DeviceController: UITableViewController, UITextFieldDelegate {
     // MARK: onError
     
     private func onError(_ error: some Error) {
-        messageReceived.text = error.localizedDescription
+        messageReceived.text = "\(error.localizedDescription)"
         messageReceived.isHidden = false
         messageReceivedBackground.tintColor = .systemRed
         messageReceivedBackground.isHidden = false
     }
-}
-
-extension DeviceController: DeviceStatusDelegate {
-    
-    func connectionStateDidChange(_ state: PeripheralState) {
-        connectionStatus.text = state.description
-    }
-    
-    func bootloaderNameReceived(_ name: String) {
-        bootloaderName.text = name
-    }
-    
-    func bootloaderModeReceived(_ mode: BootloaderInfoResponse.Mode) {
-        bootloaderMode.text = mode.description
-    }
-    
-    func appInfoReceived(_ output: String) {
-        kernel.text = output
-    }
-    
-    func mcuMgrParamsReceived(buffers: Int, size: Int) {
-        mcuMgrParams.text = "\(buffers) x \(size) bytes"
-    }
-    
 }

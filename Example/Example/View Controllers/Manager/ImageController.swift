@@ -8,11 +8,8 @@ import UIKit
 import iOSMcuManagerLibrary
 
 class ImageController: UITableViewController {
-    @IBOutlet weak var connectionStatus: UILabel!
-    @IBOutlet weak var mcuMgrParams: UILabel!
-    @IBOutlet weak var bootloaderName: UILabel!
-    @IBOutlet weak var bootloaderMode: UILabel!    
-    @IBOutlet weak var kernel: UILabel!
+    @IBOutlet weak var connectionStatus: ConnectionStateLabel!
+    
     /// Instance if Images View Controller, required to get its
     /// height when data are obtained and height changes.
     private var imagesViewController: ImagesViewController!
@@ -20,8 +17,10 @@ class ImageController: UITableViewController {
     override func viewDidAppear(_ animated: Bool) {
         showModeSwitch()
         
-        let baseController = parent as? BaseViewController
-        baseController?.deviceStatusDelegate = self
+        // Set the connection status label as transport delegate.
+        let baseController = parent as! BaseViewController
+        let bleTransporter = baseController.transporter as? McuMgrBleTransport
+        bleTransporter?.delegate = connectionStatus
     }
     
     override func viewWillDisappear(_ animated: Bool) {
@@ -34,16 +33,18 @@ class ImageController: UITableViewController {
         
         var destination = segue.destination as? McuMgrViewController
         destination?.transporter = transporter
+        
+        if let imagesViewController = segue.destination as? ImagesViewController {
+            self.imagesViewController = imagesViewController
+            imagesViewController.tableView = tableView
+        }
     }
     
     override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-        return UITableView.automaticDimension
-    }
-    
-    func innerViewReloaded() {
-        tableView.beginUpdates()
-        tableView.setNeedsDisplay()
-        tableView.endUpdates()
+        if indexPath.section == 3 /* Images */ {
+            return imagesViewController.height
+        }
+        return super.tableView(tableView, heightForRowAt: indexPath)
     }
     
     // MARK: - Handling Basic / Advanced mode
@@ -95,28 +96,4 @@ class ImageController: UITableViewController {
         }
         return super.tableView(tableView, titleForHeaderInSection: section)
     }
-}
-
-extension ImageController: DeviceStatusDelegate {
-    
-    func connectionStateDidChange(_ state: PeripheralState) {
-        connectionStatus.text = state.description
-    }
-    
-    func bootloaderNameReceived(_ name: String) {
-        bootloaderName.text = name
-    }
-    
-    func bootloaderModeReceived(_ mode: BootloaderInfoResponse.Mode) {
-        bootloaderMode.text = mode.description
-    }
-    
-    func appInfoReceived(_ output: String) {
-        kernel.text = output
-    }
-    
-    func mcuMgrParamsReceived(buffers: Int, size: Int) {
-        mcuMgrParams.text = "\(buffers) x \(size) bytes"
-    }
-    
 }

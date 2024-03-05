@@ -17,9 +17,9 @@ This repository is a fork of the [McuManager iOS Library](https://github.com/Juu
 
 ## Compatible Devices
 
-| nRF52 Series | nRF53 Series | nRF54 Series | nRF91 Series |
-| :---: | :----: | :---: | :---: |
-| ![](nRF52-Series-small.png) | ![](nRF53-Series-small.png) | ![](nRF54-Series-small.png) | ![](nRF91-Series-small.png) |
+| nRF52 Series | nRF53 Series | nRF91 Series |
+| :---: | :----: | :---: |
+| ![](nRF52-Series-small.png) | ![](nRF53-Series-small.png) | ![](nRF91-Series-small.png) |
 
 This library is designed to work with the SMP Transport over BLE. It is implemented and maintained by Nordic Semiconductor, **but it should work any devices communicating via SMP Protocol**. If you encounter an issue communicating with a device using any chip, not just Nordic, please file an Issue.
 
@@ -91,7 +91,7 @@ McuManager are organized by functionality into command groups. In _mcumgr-ios_, 
 * **`DefaultManager`**: Contains commands relevant to the OS. This includes task and memory pool statistics, device time read & write, and device reset.
 * **`ImageManager`**: Manage image state on the device and perform image uploads.
 * **`StatsManager`**: Read stats from the device.
-* **`SettingsManager`**: Read/Write config values on the device.
+* **`ConfigManager`**: Read/Write config values on the device.
 * **`LogManager`**: Collect logs from the device.
 * **`CrashManager`**: Run crash tests on the device.
 * **`RunTestManager`**: Runs tests on the device.
@@ -102,7 +102,7 @@ McuManager are organized by functionality into command groups. In _mcumgr-ios_, 
 
 Firmware upgrade is generally a four step process performed using commands from the `image` and `default` commands groups: `upload`, `test`, `reset`, and `confirm`.
 
-This library provides `FirmwareUpgradeManager` as a convenience for upgrading the image running on a device. 
+This library provides a `FirmwareUpgradeManager` as a convinience for upgrading the image running on a device. 
 
 ## FirmwareUpgradeManager
 
@@ -179,46 +179,13 @@ do {
 
 Have a look at `FirmwareUpgradeViewController.swift` from the Example project for a more detailed usage sample.
 
-### SUIT Example
-
-SUIT, or [Software Update for the Internet of Things](https://datatracker.ietf.org/wg/suit/about/), is another method of DFU that also makes use of the existing SMP Bluetooth Service. However, it places a lot of the logic (read: blame) onto the target firmware or device rather than the sender. This simplifies the internal process, but also makes parsing the raw CBOR more complicated. Regardless, from the sender's perspective, we only need to send the Data in full, and allow the target to figure things out. The only other argument needed is the Hash which, supports different Modes, also known as Types or Algorithms. The list of SUIT Algorithms includes SHA256, SHAKE128, SHA384, SHA512 and SHAKE256. Of these, the **only currently supported mode is SHA256**.
-
-```swift
-do {
-    // Initialize the BLE transporter using a scanned peripheral
-    let bleTransport = McuMgrBleTransport(cbPeripheral)
-
-    // Initialize the FirmwareUpgradeManager using the transport and a delegate
-    let dfuManager = FirmwareUpgradeManager(bleTransport, delegate)
-
-    // Parse McuMgrSuitEnvelope from File URL
-    let envelope = try McuMgrSuitEnvelope(from: dfuSuitEnvelopeUrl)
-
-    // Look for valid Algorithm Hash 
-    guard let sha256Hash = envelope.digest.hash(for: .sha256) else {
-        throw McuMgrSuitParseError.supportedAlgorithmNotFound
-    }
-
-    // Set Configuration for SUIT
-    var configuration = FirmwareUpgradeConfiguration()
-    configuration.suitMode = true
-    // Other Upgrade Modes can be set, but upgrade will fail since
-    // SUIT doesn't support TEST and CONFIRM commands for example. 
-    configuration.upgradeMode = .uploadOnly
-    try dfuManager.start(hash: sha256Hash, data: envelope.data, using: configuration)
-} catch {
-    // Handle errors from McuMgrSuitEnvelope init, start() API call, etc.
-}
-```
-
 ### Firmware Upgrade Mode
 
-McuManager firmware upgrades can be performed following slightly different procedures. These different upgrade modes determine the commands sent after the `upload` step. The `FirmwareUpgradeManager` can be configured to perform these upgrade variations by setting the `upgradeMode` in `FirmwareUpgradeManager`'s `configuration` property, explained below. (NOTE: this was previously set with `mode` property of `FirmwareUpgradeManager`, now removed) The different firmware upgrade modes are as follows:
+McuManager firmware upgrades can actually be performed in few different ways. These different upgrade modes determine the commands sent after the `upload` step. The `FirmwareUpgradeManager` can be configured to perform these upgrade variations by setting the `mode` property in `FirmwareUpgradeManager`. The different firmware upgrade modes are as follows:
 
 * **`.testAndConfirm`**: This mode is the **default and recommended mode** for performing upgrades due to it's ability to recover from a bad firmware upgrade. The process for this mode is `upload`, `test`, `reset`, `confirm`. 
 * **`.confirmOnly`**: This mode is **not recommended, except for Multi-Image DFU where it is the only supported mode**. If the device fails to boot into the new image, it will not be able to recover and will need to be re-flashed. The process for this mode is `upload`, `confirm`, `reset`.
 * **`.testOnly`**: This mode is useful if you want to run tests on the new image running before confirming it manually as the primary boot image. The process for this mode is `upload`, `test`, `reset`.
-* **`.uploadOnly`**: This is a very particular mode. It does not listen or acknowledge Bootloader Info, and plows through the upgrade process with just `upload` followed by `reset`. That's it. **It is up to the user, since this is not a default, to decide this is the right mode to use**.
 
 ### Firmware Upgrade State
 
@@ -236,9 +203,6 @@ In version 1.2, new features were introduced to speed-up the Upload speeds, mirr
 * **`byteAlignment`**: This is required when used in conjunction with SMP Pipelining. By fixing the size of each chunk of Data sent for the Firmware Upgrade, we can predict the receiving device's offset jumps and therefore smoothly send multiple Data packets at the same time. When SMP Pipelining is not being used (`pipelineDepth` set to `1`), the library still performs Byte Alignment if set, but it is not required for updates to work. Set to `ImageUploadAlignment.disabled` by default.
 * **reassemblyBufferSize**: SMP Reassembly is another speed-improving feature. It works on devices running NCS 2.0 firmware or later, and is self-adjusting. Before the Upload starts, a request is sent via `DefaultManager` asking for MCU Manager Paremeters. If received, it means the firmware can accept data in chunks larger than the MTU Size, therefore also increasing speed. This property will reflect the size of the buffer on the receiving device, and the `McuMgrBleTransport` will be set to chunk the data down within the same Sequence Number, keeping each packet transmission within the MTU boundaries. **There is no work required for SMP Reassembly to work** - on devices not supporting it, the MCU Manager Paremeters request will fail, and the Upload will proceed assuming no reassembly capabilities.
 * **`eraseAppSettings`**: This is not a speed-related feature. Instead, setting this to `true` means all app data on the device, including Bond Information, Number of Steps, Login or anything else are all erased. If there are any major data changes to the new firmware after the update, like a complete change of functionality or a new update with different save structures, this is recommended. Set to `true` by default.
-* **`upgradeMode`**: Firmware Upgrade Mode. See Section above for an in-depth explanation of all possible Upgrade Modes.
-* **`bootloaderMode`**: The Bootloader Mode is not necessarily intended to be a setting. It behaves as a setting if the target firmware does not offer a valid response to Bootloader Info request, for example, if it's not supported. What it does is inform iOSMcuMgrLibrary of the supported operations by the Bootloader. For example, if `upgradeMode` is set to `confirmOnly` but the Bootloader is in DirectXIP with no Revert mode, sending a Confirm command will be returned with an error. Which means, no Confirm command will be sent, despite the `upgradeMode` being set so. So yes, it's yet another layer of complexity from SMP / McuManager we have to deal with.
-* **`suitMode`**: An internal flag which, due to how the library is structured, needs to be exposed somewhere. SUIT has the benefit of using SMP, but the detriment of skipping many of its steps. So we need a way to inform the DFU code several of these steps need to be jumped and other conditions to be disregarded. TL;DR only set to `true` for SUIT Data. 
 
 #### Configuration Example
 

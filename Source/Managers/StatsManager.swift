@@ -17,8 +17,8 @@ public class StatsManager: McuManager {
     // MARK: - IDs
     
     enum StatsID: UInt8 {
-        case read = 0
-        case list = 1
+        case Read = 0
+        case List = 1
     }
     
     //**************************************************************************
@@ -26,7 +26,7 @@ public class StatsManager: McuManager {
     //**************************************************************************
 
     public init(transporter: McuMgrTransport) {
-        super.init(group: McuMgrGroup.statistics, transporter: transporter)
+        super.init(group: McuMgrGroup.stats, transporter: transporter)
     }
     
     //**************************************************************************
@@ -39,41 +39,13 @@ public class StatsManager: McuManager {
     /// - parameter callback: The response callback.
     public func read(module: String, callback: @escaping McuMgrCallback<McuMgrStatsResponse>) {
         let payload: [String:CBOR] = ["name": CBOR.utf8String(module)]
-        send(op: .read, commandId: StatsID.read, payload: payload, callback: callback)
+        send(op: .read, commandId: StatsID.Read, payload: payload, callback: callback)
     }
     
     /// List the statistic modules from a device.
     ///
     /// - parameter callback: The response callback.
     public func list(callback: @escaping McuMgrCallback<McuMgrStatsListResponse>) {
-        send(op: .read, commandId: StatsID.list, payload: nil, callback: callback)
-    }
-}
-
-// MARK: - StatsManagerError
-
-public enum StatsManagerError: UInt64, Error, LocalizedError {
-    case noError = 0
-    case unknown = 1
-    case invalidGroup = 2
-    case invalidStatName = 3
-    case invalidStatSize = 4
-    case abortedWalk = 5
-    
-    public var errorDescription: String? {
-        switch self {
-        case .noError:
-            return "Success"
-        case .unknown:
-            return "Unknown error"
-        case .invalidGroup:
-            return "Statistic group not found"
-        case .invalidStatName:
-            return "Statistic name not found"
-        case .invalidStatSize:
-            return "Size of the statistic cannot be handled"
-        case .abortedWalk:
-            return "Walkthrough of statistics was aborted"
-        }
+        send(op: .read, commandId: StatsID.List, payload: nil, callback: callback)
     }
 }

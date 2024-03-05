@@ -8,6 +8,16 @@
       "appearances" : [
         {
           "appearance" : "luminosity",
+          "value" : "light"
+        }
+      ],
+      "idiom" : "universal",
+      "scale" : "1x"
+    },
+    {
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
           "value" : "dark"
         }
       ],
@@ -15,6 +25,18 @@
       "scale" : "1x"
     },
     {
+      "filename" : "splashscreen@2x.png",
+      "idiom" : "universal",
+      "scale" : "2x"
+    },
+    {
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "light"
+        }
+      ],
+      "filename" : "splashscreen@2x.png",
       "idiom" : "universal",
       "scale" : "2x"
     },
@@ -25,11 +47,23 @@
           "value" : "dark"
         }
       ],
+      "filename" : "splashscreenDark@2x.png",
       "idiom" : "universal",
       "scale" : "2x"
     },
     {
-      "filename" : "NordicLogo_light.png",
+      "filename" : "splashscreen@3x.png",
+      "idiom" : "universal",
+      "scale" : "3x"
+    },
+    {
+      "appearances" : [
+        {
+          "appearance" : "luminosity",
+          "value" : "light"
+        }
+      ],
+      "filename" : "splashscreen@3x.png",
       "idiom" : "universal",
       "scale" : "3x"
     },
@@ -40,7 +74,7 @@
           "value" : "dark"
         }
       ],
-      "filename" : "NordicLogo_dark.png",
+      "filename" : "splashscreenDark@3x.png",
       "idiom" : "universal",
       "scale" : "3x"
     }

@@ -105,7 +105,7 @@ final class McuMgrBleTransportWriteState {
     }
 }
 
-// MARK: - File private
+// MARK: - Fileprivate
 
 fileprivate extension McuMgrBleTransportWriteState {
     

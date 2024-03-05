@@ -8,16 +8,15 @@ import UIKit
 import iOSMcuManagerLibrary
 
 class LogsStatsController: UITableViewController {
-    @IBOutlet weak var connectionStatus: UILabel!
-    @IBOutlet weak var mcuMgrParams: UILabel!
-    @IBOutlet weak var bootloaderName: UILabel!
-    @IBOutlet weak var bootloaderMode: UILabel!
-    @IBOutlet weak var kernel: UILabel!
+    @IBOutlet weak var connectionStatus: ConnectionStateLabel!
     @IBOutlet weak var stats: UILabel!
     @IBOutlet weak var refreshAction: UIButton!
     
     @IBAction func refreshTapped(_ sender: UIButton) {
         statsManager.list { (response, error) in
+            let bounds = CGSize(width: self.stats.frame.width, height: CGFloat.greatestFiniteMagnitude)
+            var oldRect = self.stats.sizeThatFits(bounds)
+            
             if let response = response {
                 self.stats.text = ""
                 self.stats.textColor = .primary
@@ -49,22 +48,31 @@ class LogsStatsController: UITableViewController {
                             } else {
                                 self.stats.text!.removeLast()
                             }
+                            
+                            let newRect = self.stats.sizeThatFits(bounds)
+                            let diff = newRect.height - oldRect.height
+                            oldRect = newRect
+                            self.height += diff
+                            self.tableView.reloadData()
                         })
                     }
                 } else {
-                    self.stats.text = "No stats found"
+                    self.stats.text = "No stats found."
                 }
             } else {
                 self.stats.textColor = .systemRed
-                self.stats.text = error!.localizedDescription
+                self.stats.text = "\(error!)"
+                
+                let newRect = self.stats.sizeThatFits(bounds)
+                let diff = newRect.height - oldRect.height
+                self.height += diff
+                self.tableView.reloadData()
             }
-            self.tableView.beginUpdates()
-            self.tableView.setNeedsDisplay()
-            self.tableView.endUpdates()
         }
     }
     
     private var statsManager: StatsManager!
+    private var height: CGFloat = 106
     
     override func viewDidLoad() {
         let baseController = parent as! BaseViewController
@@ -74,36 +82,16 @@ class LogsStatsController: UITableViewController {
     }
     
     override func viewDidAppear(_ animated: Bool) {
-        let baseController = parent as? BaseViewController
-        baseController?.deviceStatusDelegate = self
+        // Set the connection status label as transport delegate.
+        let bleTransporter = statsManager.transporter as? McuMgrBleTransport
+        bleTransporter?.delegate = connectionStatus
     }
     
     override func tableView(_ tableView: UITableView, heightForRowAt indexPath: IndexPath) -> CGFloat {
-        return UITableView.automaticDimension
+        if indexPath.section == 1 /* Stats */ {
+            return height
+        }
+        return super.tableView(tableView, heightForRowAt: indexPath)
     }
 
-}
-
-extension LogsStatsController: DeviceStatusDelegate {
-    
-    func connectionStateDidChange(_ state: PeripheralState) {
-        connectionStatus.text = state.description
-    }
-    
-    func bootloaderNameReceived(_ name: String) {
-        bootloaderName.text = name
-    }
-    
-    func bootloaderModeReceived(_ mode: BootloaderInfoResponse.Mode) {
-        bootloaderMode.text = mode.description
-    }
-    
-    func appInfoReceived(_ output: String) {
-        kernel.text = output
-    }
-    
-    func mcuMgrParamsReceived(buffers: Int, size: Int) {
-        mcuMgrParams.text = "\(buffers) x \(size) bytes"
-    }
-    
 }
