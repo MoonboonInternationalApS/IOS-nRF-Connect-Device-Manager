@@ -5,8 +5,9 @@
         "package": "SwiftCBOR",
         "repositoryURL": "https://github.com/MoonboonInternationalApS/SwiftCBOR.git",
         "state": {
-          "branch": null,
-          "version": "0.4.7"
+          "branch": "master",
+          "revision": "b13027c0b2d99b613e82d2890cdc3f2d279858e7",
+          "version": null
         }
       }
     ]

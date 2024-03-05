@@ -12,10 +12,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(
-            url: "https://github.com/MoonboonInternationalApS/SwiftCBOR.git",
-            .exact("0.4.7")
-        ),
+        .package(url: "https://github.com/MoonboonInternationalApS/SwiftCBOR.git", .branchItem("master"))
     ],
     targets: [
         .target(
