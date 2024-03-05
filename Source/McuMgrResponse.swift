@@ -18,6 +18,12 @@ open class McuMgrResponse: CBORMappable {
     /// assumed.
     public var rc: UInt64 = 0
     
+    /**
+     In SMPv2, when a Request makes it into a specific Group, that Group may
+     return its own kind of Return Code or Error.
+     */
+    public var groupRC: McuMgrGroupReturnCode?
+    
     //**************************************************************************
     // MARK: Response Properties
     //**************************************************************************
@@ -39,9 +45,9 @@ open class McuMgrResponse: CBORMappable {
     /// The raw McuMgrResponse payload.
     public var payloadData: Data?
     
-    /// The repsponse's return code obtained from the payload. If no return code
-    /// is explicitly stated, OK (0) is assumed.
-    public var returnCode: McuMgrReturnCode = .ok
+    /// The response's result obtained from the payload. If no Return Code (RC)
+    /// or Group Error is explicitly stated, success is assumed.
+    public var result: Result<Void, McuMgrError> = .success(())
     
     /// The CoAP Response code for CoAP based transport schemes. For non-CoAP
     /// transport schemes this value will always be 0
@@ -53,6 +59,9 @@ open class McuMgrResponse: CBORMappable {
     
     public required init(cbor: CBOR?) throws {
         try super.init(cbor: cbor)
+        if case let CBOR.map(err)? = cbor?["err"] {
+            self.groupRC = try McuMgrGroupReturnCode(map: err)
+        }
         if case let CBOR.unsignedInt(rc)? = cbor?["rc"] {
             self.rc = rc
         }
@@ -62,8 +71,17 @@ open class McuMgrResponse: CBORMappable {
     // MARK: Functions
     //**************************************************************************
     
-    public func isSuccess() -> Bool {
-        return returnCode.isSuccess()
+    /**
+     Returns `LocalizedError` if any is present. Either Group Error or McuManager
+     Error. If `nil`, success scenario can be assumed.
+     */
+    public func getError() -> LocalizedError? {
+        switch result {
+        case .success:
+            return nil
+        case .failure(let error):
+            return error
+        }
     }
     
     //**************************************************************************
@@ -79,7 +97,7 @@ open class McuMgrResponse: CBORMappable {
     ///
     /// - parameter scheme: the transport scheme of the transporter.
     /// - parameter data: The response's raw packet data.
-    /// - parameter coapPaylaod: (Optional) payload for CoAP transport schemes.
+    /// - parameter coapPayload: (Optional) payload for CoAP transport schemes.
     /// - parameter coapCode: (Optional) CoAP response code.
     ///
     /// - returns: The McuMgrResponse on success or nil on failure.
@@ -134,7 +152,13 @@ open class McuMgrResponse: CBORMappable {
         response.header = header
         response.scheme = scheme
         response.rawData = bytes
-        response.returnCode = McuMgrReturnCode(rawValue: response.rc) ?? .unrecognized
+        if let groupRC = response.groupRC, groupRC.rc != 0 {
+            response.result = .failure(.groupCode(groupRC))
+        } else if let returnCode = McuMgrReturnCode(rawValue: response.rc), returnCode != .ok {
+            response.result = .failure(.returnCode(returnCode))
+        } else {
+            response.result = .success(())
+        }
         response.coapCode = coapCode
         
         return response
@@ -178,7 +202,7 @@ open class McuMgrResponse: CBORMappable {
     // MARK: Utilities
     //**************************************************************************
     
-    /// Gets the expected length of the entire respose from the length field in
+    /// Gets the expected length of the entire response from the length field in
     /// the McuMgrHeader. The return value includes the 8-byte McuMgr header.
     ///
     /// - parameter scheme: The transport scheme (Must be BLE to use this
@@ -198,19 +222,13 @@ open class McuMgrResponse: CBORMappable {
     }
 }
 
-extension McuMgrResponse: CustomStringConvertible {
-    
-    public var description: String {
-        return payload?.description ?? "nil"
-    }
-}
-
 extension McuMgrResponse: CustomDebugStringConvertible {
     
     /// String representation of the response.
     public var debugDescription: String {
         return "Header: \(self.header!), Payload: \(payload?.description ?? "nil")"
     }
+    
 }
 
 //******************************************************************************
@@ -227,9 +245,9 @@ extension McuMgrResponseParseError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .invalidDataSize:
-            return "Invalid data size."
+            return "Invalid data size"
         case .invalidPayload:
-            return "Invalid payload."
+            return "Invalid payload"
         }
     }
     
@@ -300,6 +318,33 @@ public class McuMgrTaskStatsResponse: McuMgrResponse {
     }
 }
 
+// MARK: - McuMgrExecResponse
+
+public class McuMgrExecResponse: McuMgrResponse {
+    
+    /// Command output.
+    public var output: String?
+    
+    public required init(cbor: CBOR?) throws {
+        try super.init(cbor: cbor)
+        if case let CBOR.utf8String(output)? = cbor?["o"] {
+            self.output = output
+        }
+    }
+    
+    public override func getError() -> LocalizedError? {
+        switch result {
+        case .success:
+            return nil
+        case .failure(let error):
+            guard let shellError = ShellManagerError(rawValue: rc) else {
+                return error
+            }
+            return shellError
+        }
+    }
+}
+
 public class McuMgrMemoryPoolStatsResponse: McuMgrResponse {
     
     /// A map of task names to task statistics.
@@ -351,7 +396,6 @@ public class McuMgrDateTimeResponse: McuMgrResponse {
 public final class McuMgrParametersResponse: McuMgrResponse {
     
     public var bufferSize: UInt64!
-    
     public var bufferCount: UInt64!
     
     public required init(cbor: CBOR?) throws {
@@ -359,6 +403,83 @@ public final class McuMgrParametersResponse: McuMgrResponse {
         
         if case let CBOR.unsignedInt(bufferSize)? = cbor?["buf_size"] { self.bufferSize = bufferSize }
         if case let CBOR.unsignedInt(bufferCount)? = cbor?["buf_count"] { self.bufferCount = bufferCount }
+    }
+}
+
+// MARK: - AppInfoResponse
+
+public final class AppInfoResponse: McuMgrResponse {
+    
+    public var response: String!
+    
+    public required init(cbor: CBOR?) throws {
+        try super.init(cbor: cbor)
+        if case let CBOR.utf8String(output)? = cbor?["output"] {
+            self.response = output
+        }
+    }
+}
+
+// MARK: - BootloaderInfoResponse
+
+public final class BootloaderInfoResponse: McuMgrResponse {
+    
+    public enum Mode: Int, Codable, CustomDebugStringConvertible {
+        case unknown = -1
+        case singleApplication = 0
+        case swapUsingScratch = 1
+        case overwrite = 2
+        case swapNoScratch = 3
+        case directXIPNoRevert = 4
+        case directXIPWithRevert = 5
+        case RAMLoader = 6
+        
+        /**
+         Intended for use cases where it's not important to know what kind of DirectXIP
+         variant this Bootloader Mode might represent, but instead, whether it's
+         DirectXIP or not.
+         */
+        public var isDirectXIP: Bool {
+            return self == .directXIPNoRevert || self == .directXIPWithRevert
+        }
+        
+        public var debugDescription: String {
+            switch self {
+            case .unknown:
+                return "Unknown"
+            case .singleApplication:
+                return "Single application"
+            case .swapUsingScratch:
+                return "Swap using scratch partition"
+            case .overwrite:
+                return "Overwrite (upgrade-only)"
+            case .swapNoScratch:
+                return "Swap without scratch"
+            case .directXIPNoRevert:
+                return "Direct-XIP without revert"
+            case .directXIPWithRevert:
+                return "Direct-XIP with revert"
+            case .RAMLoader:
+                return "RAM Loader"
+            }
+        }
+    }
+    
+    public var bootloader: String?
+    public var mode: Mode?
+    public var noDowngrade: Bool?
+    
+    public required init(cbor: CBOR?) throws {
+        try super.init(cbor: cbor)
+        if case let CBOR.utf8String(bootloader)? = cbor?["bootloader"] {
+            self.bootloader = bootloader
+        }
+        if case let CBOR.unsignedInt(mode)? = cbor?["mode"] {
+            self.mode = Mode(rawValue: Int(mode))
+        }
+        if case let CBOR.boolean(noDowngrade)? = cbor?["no-downgrade"] {
+            self.noDowngrade = noDowngrade
+        }
     }
 }
 
@@ -389,29 +510,39 @@ public class McuMgrImageStateResponse: McuMgrResponse {
 
 extension McuMgrImageStateResponse {
     
-    public class ImageSlot: CBORMappable {
+    public class ImageSlot: CBORMappable, CustomDebugStringConvertible {
         
         // MARK: Properties
         
         /// The (zero) index of this image.
-        public var image: UInt64! { unsignedUInt64(defaultValue: 0) }
+        public var image: UInt64 { unsignedUInt64(defaultValue: 0) }
         /// The (zero) index of this image slot (0 for primary, 1 for secondary).
-        public var slot: UInt64! { unsignedUInt64() }
-        /// The verison of the image.
-        public var version: String! { utf8String() }
-        /// The sha256 hash of the image.
-        public var hash: [UInt8]! { byteString() }
+        public var slot: UInt64 { unsignedUInt64(defaultValue: 0) }
+        /// The version of the image.
+        public var version: String? { utf8String() }
+        /// The SHA256 hash of the image.
+        public var hash: [UInt8] { byteString() }
         /// Bootable flag.
-        public var bootable: Bool! { boolean() }
+        public var bootable: Bool { boolean() }
         /// Pending flag. A pending image will be booted into on reset.
-        public var pending: Bool! { boolean() }
-        /// Confired flag. A confirmed image will always be booted into (unless
+        public var pending: Bool { boolean() }
+        /// Confirmed flag. A confirmed image will always be booted into (unless
         /// another image is pending.
-        public var confirmed: Bool! { boolean() }
+        public var confirmed: Bool { boolean() }
         /// Active flag. Set if the image in this slot is active.
-        public var active: Bool! { boolean() }
+        public var active: Bool { boolean() }
         /// Permanent flag. Set if this image is permanent.
-        public var permanent: Bool! { boolean() }
+        public var permanent: Bool { boolean() }
+        
+        // MARK: CustomDebugStringConvertible
+        
+        public var debugDescription: String {
+            return """
+            Hash: \(hash)
+            Image \(image), Slot \(slot), Version \(version)
+            Bootable \(bootable ? "Yes" : "No"), Pending \(pending ? "Yes" : "No"), Confirmed \(confirmed ? "Yes" : "No"), Active \(active ? "Yes" : "No"), Permanent \(permanent ? "Yes" : "No")
+            """
+        }
         
         // MARK: Init
         
@@ -424,23 +555,23 @@ extension McuMgrImageStateResponse {
         
         // MARK: Private
         
-        private func unsignedUInt64(forKey key: String = #function, defaultValue: UInt64? = nil) -> UInt64! {
+        private func unsignedUInt64(forKey key: String = #function, defaultValue: UInt64) -> UInt64 {
             guard case let CBOR.unsignedInt(int)? = cbor?[.utf8String(key)] else { return defaultValue }
             return int
         }
         
-        private func utf8String(forKey key: String = #function) -> String! {
+        private func utf8String(forKey key: String = #function) -> String? {
             guard case let CBOR.utf8String(string)? = cbor?[.utf8String(key)] else { return nil }
             return string
         }
         
-        private func byteString(forKey key: String = #function) -> [UInt8]! {
-            guard case let CBOR.byteString(cString)? = cbor?[.utf8String(key)] else { return nil }
+        private func byteString(forKey key: String = #function) -> [UInt8] {
+            guard case let CBOR.byteString(cString)? = cbor?[.utf8String(key)] else { return [] }
             return cString
         }
         
-        private func boolean(forKey key: String = #function) -> Bool! {
-            guard case let CBOR.boolean(bool)? = cbor?[.utf8String(key)] else { return nil }
+        private func boolean(forKey key: String = #function) -> Bool {
+            guard case let CBOR.boolean(bool)? = cbor?[.utf8String(key)] else { return false }
             return bool
         }
     }
@@ -510,6 +641,75 @@ public class McuMgrFsDownloadResponse: McuMgrResponse {
         if case let CBOR.unsignedInt(off)? = cbor?["off"] {self.off = off}
         if case let CBOR.unsignedInt(len)? = cbor?["len"] {self.len = len}
         if case let CBOR.byteString(data)? = cbor?["data"] {self.data = data}
+    }
+}
+
+public class McuMgrFilesystemCrc32Response: McuMgrResponse {
+    
+    // Type of hash/checksum that was performed.
+    public var type: String?
+    // Offset that checksum calculation started at
+    public var off: UInt64?
+    // Length of input data used for hash/checksum generation (in bytes)
+    public var len: UInt64?
+    // IEEE CRC32 checksum (uint32 represented as type long)
+    public var output: UInt64?
+    
+    public required init(cbor: CBOR?) throws {
+        try super.init(cbor: cbor)
+        if case let CBOR.utf8String(type)? = cbor?["type"] {
+            self.type = type
+        }
+        if case let CBOR.unsignedInt(off)? = cbor?["off"] {
+            self.off = off
+        }
+        if case let CBOR.unsignedInt(len)? = cbor?["len"] {
+            self.len = len
+        }
+        if case let CBOR.unsignedInt(output)? = cbor?["output"] {
+            self.output = output
+        }
+    }
+}
+
+public class McuMgrFilesystemSha256Response: McuMgrResponse {
+    
+    // Type of hash/checksum that was performed.
+    public var type: String?
+    // Offset that checksum calculation started at.
+    public var off: UInt64?
+    // Length of input data used for hash/checksum generation (in bytes)
+    public var len: UInt64?
+    // 32-byte SHA256 (Secure Hash Algorithm)
+    public var output: [UInt8]?
+    
+    public required init(cbor: CBOR?) throws {
+        try super.init(cbor: cbor)
+        if case let CBOR.utf8String(type)? = cbor?["type"] {
+            self.type = type
+        }
+        if case let CBOR.unsignedInt(off)? = cbor?["off"] {
+            self.off = off
+        }
+        if case let CBOR.unsignedInt(len)? = cbor?["len"] {
+            self.len = len
+        }
+        if case let CBOR.byteString(output)? = cbor?["output"] {
+            self.output = output
+        }
+    }
+}
+
+public class McuMgrFilesystemStatusResponse: McuMgrResponse {
+    
+    /// The length of the file.
+    public var len: UInt64?
+    
+    public required init(cbor: CBOR?) throws {
+        try super.init(cbor: cbor)
+        if case let CBOR.unsignedInt(len)? = cbor?["len"] {
+            self.len = len
+        }
     }
 }
 

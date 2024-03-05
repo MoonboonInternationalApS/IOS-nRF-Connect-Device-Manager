@@ -6,6 +6,8 @@
 
 import Foundation
 
+// MARK: - McuMgrLogLevel
+
 /// Log level.
 ///
 /// Logger application may filter log entries based on their level.
@@ -37,22 +39,34 @@ public enum McuMgrLogLevel: Int {
     }
 }
 
-/// The log category indicates the component that created the log entry.
-public enum McuMgrLogCategory: String {
-    case transport = "Transport"
-    case config    = "ConfigManager"
-    case crash     = "CrashManager"
-    case `default` = "DefaultManager"
-    case fs        = "FSManager"
-    case image     = "ImageManager"
-    case log       = "LogManager"
-    case runTest   = "RunTestManager"
-    case stats     = "StatsManager"
-    case dfu       = "DFU"
-    case basic     = "BasicManager"
+extension McuMgrLogLevel: Comparable {
+    
+    public static func < (lhs: McuMgrLogLevel, rhs: McuMgrLogLevel) -> Bool {
+        return lhs.rawValue < rhs.rawValue
+    }
+    
 }
 
-/// The Logger delegate.
+// MARK: - McuMgrLogCategory
+
+/// The log category indicates the component that created the log entry.
+public enum McuMgrLogCategory: String {
+    case transport         = "Transport"
+    case settings          = "SettingsManager"
+    case crash             = "CrashManager"
+    case `default`         = "DefaultManager"
+    case filesystemManager = "FileSystemManager"
+    case image             = "ImageManager"
+    case log               = "LogManager"
+    case runTest           = "RunTestManager"
+    case stats             = "StatsManager"
+    case dfu               = "DFU"
+    case basic             = "BasicManager"
+    case shell             = "ShellManager"
+}
+
+// MARK: - McuMgrLogDelegate
+
 public protocol McuMgrLogDelegate: AnyObject {
     
     /// Provides the delegate with content intended to be logged.
@@ -64,4 +78,14 @@ public protocol McuMgrLogDelegate: AnyObject {
     func log(_ msg: String,
              ofCategory category: McuMgrLogCategory,
              atLevel level: McuMgrLogLevel)
+    
+    /// Returns the minimum log level to be logged.
+    func minLogLevel() -> McuMgrLogLevel
+}
+
+public extension McuMgrLogDelegate {
+    
+    func minLogLevel() -> McuMgrLogLevel {
+        return .debug
+    }
 }

@@ -20,7 +20,7 @@ public class BasicManager: McuManager {
     public static let MAX_ECHO_MESSAGE_SIZE_BYTES = 2475
     
     enum ID: UInt8 {
-        case Reset = 0
+        case reset = 0
     }
     
     // MARK: - Init
@@ -35,20 +35,31 @@ public class BasicManager: McuManager {
     ///
     /// - parameter callback: The response callback with a ``McuMgrResponse``.
     public func eraseAppSettings(callback: @escaping McuMgrCallback<McuMgrResponse>) {
-        send(op: .write, commandId: ID.Reset, payload: [:], timeout: McuManager.FAST_TIMEOUT, callback: callback)
+        send(op: .write, commandId: ID.reset, payload: [:], timeout: McuManager.FAST_TIMEOUT, callback: callback)
     }
 }
 
 // MARK: - BasicManagerError
 
-enum BasicManagerError: Hashable, Error, LocalizedError {
+public enum BasicManagerError: UInt64, Error, LocalizedError {
+    case noError = 0
+    case unknown = 1
+    case flashOpenFailed = 2
+    case flashConfigQueryFailed = 3
+    case flashEraseFailed = 4
     
-    case echoMessageOverTheLimit(_ messageSize: Int)
-    
-    var errorDescription: String? {
+    public var errorDescription: String? {
         switch self {
-        case .echoMessageOverTheLimit(let messageSize):
-            return "Echo Message of \(messageSize) bytes in size is over the limit of \(BasicManager.MAX_ECHO_MESSAGE_SIZE_BYTES) bytes."
+        case .noError:
+            return "Success"
+        case .unknown:
+            return "Unknown error"
+        case .flashOpenFailed:
+            return "Opening flash area failed"
+        case .flashConfigQueryFailed:
+            return "Querying flash area parameters failed"
+        case .flashEraseFailed:
+            return "Erasing flash area failed"
         }
     }
 }

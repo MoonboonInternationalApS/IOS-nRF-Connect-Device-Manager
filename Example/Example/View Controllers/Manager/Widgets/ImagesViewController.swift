@@ -17,19 +17,16 @@ class ImagesViewController: UIViewController , McuMgrViewController{
     
     @IBAction func read(_ sender: UIButton) {
         busy()
-        defaultManager.params { response, _ in
-            self.mcuMgrResponse = response
-            self.imageManager.list { (response, error) in
-                self.lastResponse = response
-                self.handle(response, error)
-            }
+        imageManager.list { [weak self] response, error in
+            self?.lastResponse = response
+            self?.handle(response, error)
         }
     }
     
     @IBAction func test(_ sender: UIButton) {
         selectImageCore() { [weak self] imageHash in
             self?.busy()
-            self?.imageManager.test(hash: imageHash) { (response, error) in
+            self?.imageManager.test(hash: imageHash) { [weak self] response, error in
                 self?.lastResponse = response
                 self?.handle(response, error)
             }
@@ -38,7 +35,7 @@ class ImagesViewController: UIViewController , McuMgrViewController{
     @IBAction func confirm(_ sender: UIButton) {
         selectImageCore() { [weak self] imageHash in
             self?.busy()
-            self?.imageManager.confirm(hash: imageHash) { (response, error) in
+            self?.imageManager.confirm(hash: imageHash) { [weak self] response, error in
                 self?.lastResponse = response
                 self?.handle(response, error)
             }
@@ -46,18 +43,17 @@ class ImagesViewController: UIViewController , McuMgrViewController{
     }
     @IBAction func erase(_ sender: UIButton) {
         busy()
-        imageManager.erase { (response, error) in
+        imageManager.erase { [weak self] response, error in
             if let _ = response {
-                self.read(sender)
+                self?.read(sender)
             } else {
-                self.readAction.isEnabled = true
-                self.message.textColor = .systemRed
-                self.message.text = "\(error!)"
+                self?.readAction.isEnabled = true
+                self?.message.textColor = .systemRed
+                self?.message.text = "\(error!)"
             }
         }
     }
     
-    private var mcuMgrResponse: McuMgrParametersResponse?
     private var lastResponse: McuMgrImageStateResponse?
     private var imageManager: ImageManager!
     private var defaultManager: DefaultManager!
@@ -69,8 +65,6 @@ class ImagesViewController: UIViewController , McuMgrViewController{
             defaultManager.logDelegate = UIApplication.shared.delegate as? McuMgrLogDelegate
         }
     }
-    var height: CGFloat = 110
-    var tableView: UITableView!
     
     private func selectImageCore(callback: @escaping (([UInt8]) -> Void)) {
         guard let responseImages = lastResponse?.images, responseImages.count > 1 else {
@@ -80,10 +74,10 @@ class ImagesViewController: UIViewController , McuMgrViewController{
             return
         }
         
-        let alertController = UIAlertController(title: "Select Image", message: nil, preferredStyle: .actionSheet)
+        let alertController = UIAlertController(title: "Select image", message: nil, preferredStyle: .actionSheet)
         for image in responseImages {
             guard !image.confirmed else { continue }
-            let title = "Image \(image.image!), Slot \(image.slot!)"
+            let title = "Image \(image.image), slot \(image.slot)"
             alertController.addAction(UIAlertAction(title: title, style: .default) { action in
                 callback(image.hash)
             })
@@ -99,80 +93,79 @@ class ImagesViewController: UIViewController , McuMgrViewController{
         present(alertController, animated: true)
     }
     
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.translatesAutoresizingMaskIntoConstraints = false
+    }
+    
+    // MARK: handle(response:error:)
+    
     private func handle(_ response: McuMgrImageStateResponse?, _ error: Error?) {
-        let bounds = CGSize(width: message.frame.width, height: CGFloat.greatestFiniteMagnitude)
-        let oldRect = message.sizeThatFits(bounds)
-        
-        if let response = response {
-            if response.isSuccess(), let images = response.images {
-                var info = ""
+        if let response {
+            switch response.result {
+            case .success:
+                let images = response.images ?? []
+                let nonActive = images.count > 1 ? (images[0].active ? 1 : 0) : 0
+                testAction.isEnabled = images.count > 1 && !images[nonActive].pending
+                confirmAction.isEnabled = images.count > 1 && !images[nonActive].permanent
+                eraseAction.isEnabled = images.count > 1 && !images[nonActive].confirmed
                 
-                if let mcuMgrResponse = mcuMgrResponse {
-                    info += "McuMgr Parameters:\n"
-                    if let bufferCount = mcuMgrResponse.bufferCount,
-                       let bufferSize = mcuMgrResponse.bufferSize {
-                        info += "• Buffer Count: \(bufferCount)\n"
-                        info += "• Buffer Size: \(bufferSize) bytes\n"
-                    } else {
-                        info += "• Buffer Count: N/A\n"
-                        info += "• Buffer Size: N/A\n"
-                    }
-                }
-                
-                info += "\nSplit status: \(response.splitStatus ?? 0)\n"
-                
-                for image in images {
-                    info += "\nImage \(image.image!)\n" +
-                        "• Slot: \(image.slot!)\n" +
-                        "• Version: \(image.version!)\n" +
-                        "• Hash: \(Data(image.hash).hexEncodedString(options: .upperCase))\n" +
-                        "• Flags: "
-                    if image.bootable {
-                        info += "Bootable, "
-                    }
-                    if image.pending {
-                        info += "Pending, "
-                    }
-                    if image.confirmed {
-                        info += "Confirmed, "
-                    }
-                    if image.active {
-                        info += "Active, "
-                    }
-                    if image.permanent {
-                        info += "Permanent, "
-                    }
-                    if !image.bootable && !image.pending && !image.confirmed && !image.active && !image.permanent {
-                        info += "None"
-                    } else {
-                        info = String(info.dropLast(2))
-                    }
-                }
-                readAction.isEnabled = true
-                testAction.isEnabled = images.count > 1 && !images[1].pending
-                confirmAction.isEnabled = images.count > 1 && !images[1].permanent
-                eraseAction.isEnabled = images.count > 1 && !images[1].confirmed
-                
-                message.text = info
-                message.textColor = .primary
-            } else { // not a success
-                readAction.isEnabled = true
-                message.textColor = .systemRed
-                message.text = "Device returned error: \(response.returnCode)"
+                updateUI(text: getInfo(from: response), color: .primary, readEnabled: true)
+            case .failure(let error):
+                updateUI(text: error.localizedDescription,
+                         color: .systemRed, readEnabled: true)
             }
         } else { // no response
             readAction.isEnabled = true
             message.textColor = .systemRed
             if let error = error {
-                message.text = "\(error.localizedDescription)"
+                message.text = error.localizedDescription
             } else {
                 message.text = "Empty response"
             }
         }
-        let newRect = message.sizeThatFits(bounds)
-        let diff = newRect.height - oldRect.height
-        height += diff
-        tableView.reloadData()
+        (parent as! ImageController).innerViewReloaded()
+    }
+    
+    // MARK: getInfo()
+    
+    private func getInfo(from response: McuMgrImageStateResponse) -> String {
+        let images = response.images ?? []
+        var info = "Split status: \(response.splitStatus ?? 0)"
+        
+        for image in images {
+            info += "\n\nImage: \(image.image), Slot: \(image.slot)\n" +
+                "• Version: \(image.version ?? "Unknown")\n" +
+                "• Hash: \(Data(image.hash).hexEncodedString(options: .upperCase))\n" +
+                "• Flags: "
+            if image.bootable {
+                info += "Bootable, "
+            }
+            if image.pending {
+                info += "Pending, "
+            }
+            if image.confirmed {
+                info += "Confirmed, "
+            }
+            if image.active {
+                info += "Active, "
+            }
+            if image.permanent {
+                info += "Permanent, "
+            }
+            if !image.bootable && !image.pending && !image.confirmed && !image.active && !image.permanent {
+                info += "None, "
+            } else {
+                info = String(info.dropLast(2))
+            }
+        }
+        return info
+    }
+    
+    private func updateUI(text: String, color: UIColor, readEnabled: Bool) {
+        message.text = text
+        message.textColor = color
+        readAction.isEnabled = readEnabled
     }
     
     private func busy() {

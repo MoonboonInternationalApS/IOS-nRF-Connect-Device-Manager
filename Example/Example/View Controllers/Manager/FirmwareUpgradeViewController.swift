@@ -33,7 +33,7 @@ final class FirmwareUpgradeViewController: UIViewController, McuMgrViewControlle
     // MARK: - IBAction(s)
     
     @IBAction func selectFirmware(_ sender: UIButton) {
-        let supportedDocumentTypes = ["com.apple.macbinary-archive", "public.zip-archive", "com.pkware.zip-archive"]
+        let supportedDocumentTypes = ["com.apple.macbinary-archive", "public.zip-archive", "com.pkware.zip-archive", "com.apple.font-suitcase"]
         let importMenu = UIDocumentMenuViewController(documentTypes: supportedDocumentTypes,
                                                       in: .import)
         importMenu.delegate = self
@@ -58,8 +58,13 @@ final class FirmwareUpgradeViewController: UIViewController, McuMgrViewControlle
     }
     
     @IBAction func start(_ sender: UIButton) {
-        guard canStartUpload() else { return }
-        selectMode(for: package!)
+        if let package {
+            selectMode(for: package)
+        } else if let envelope {
+            // SUIT has "no mode" to select
+            // (We use modes in the code only, but SUIT has no concept of upload modes)
+            startFirmwareUpgrade(envelope: envelope)
+        }
     }
     
     @IBAction func pause(_ sender: UIButton) {
@@ -71,8 +76,6 @@ final class FirmwareUpgradeViewController: UIViewController, McuMgrViewControlle
     }
     
     @IBAction func resume(_ sender: UIButton) {
-        guard canStartUpload() else { return }
-        
         uploadTimestamp = nil
         uploadImageSize = nil
         dfuManager.resume()
@@ -87,6 +90,7 @@ final class FirmwareUpgradeViewController: UIViewController, McuMgrViewControlle
     }
     
     private var package: McuMgrPackage?
+    private var envelope: McuMgrSuitEnvelope?
     private var dfuManager: FirmwareUpgradeManager!
     var transporter: McuMgrTransport! {
         didSet {
@@ -103,10 +107,15 @@ final class FirmwareUpgradeViewController: UIViewController, McuMgrViewControlle
     private var uploadImageSize: Int!
     private var uploadTimestamp: Date!
     
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.translatesAutoresizingMaskIntoConstraints = false
+    }
+    
     // MARK: - Logic
     
     private func setSwapTime() {
-        let alertController = UIAlertController(title: "Swap Time (in seconds)", message: nil, preferredStyle: .actionSheet)
+        let alertController = UIAlertController(title: "Swap time (in seconds)", message: nil, preferredStyle: .actionSheet)
         let seconds = [0, 5, 10, 20, 30, 40]
         seconds.forEach { numberOfSeconds in
             alertController.addAction(UIAlertAction(title: "\(numberOfSeconds) seconds", style: .default) {
@@ -119,8 +128,8 @@ final class FirmwareUpgradeViewController: UIViewController, McuMgrViewControlle
     }
     
     private func setPipelineDepth() {
-        let alertController = UIAlertController(title: "Number of Buffers", message: nil, preferredStyle: .actionSheet)
-        let values = [2, 3, 4, 5, 6]
+        let alertController = UIAlertController(title: "Number of buffers", message: nil, preferredStyle: .actionSheet)
+        let values = [2, 3, 4, 5, 6, 7, 8]
         values.forEach { value in
             let title = value == values.first ? "Disabled" : "\(value)"
             alertController.addAction(UIAlertAction(title: title, style: .default) {
@@ -134,11 +143,12 @@ final class FirmwareUpgradeViewController: UIViewController, McuMgrViewControlle
     }
     
     private func setByteAlignment() {
-        let alertController = UIAlertController(title: "Byte Alignment", message: nil, preferredStyle: .actionSheet)
+        let alertController = UIAlertController(title: "Byte alignment", message: nil, preferredStyle: .actionSheet)
         ImageUploadAlignment.allCases.forEach { alignmentValue in
-            alertController.addAction(UIAlertAction(title: alignmentValue.description, style: .default) {
+            let text = "\(alignmentValue)"
+            alertController.addAction(UIAlertAction(title: text, style: .default) {
                 action in
-                self.dfuByteAlignment.text = alignmentValue.description
+                self.dfuByteAlignment.text = text
                 self.dfuManagerConfiguration.byteAlignment = alignmentValue
             })
         }
@@ -149,28 +159,13 @@ final class FirmwareUpgradeViewController: UIViewController, McuMgrViewControlle
         dfuManagerConfiguration.eraseAppSettings = sender.isOn
     }
     
-    private func canStartUpload() -> Bool {
-        guard dfuManagerConfiguration.pipelineDepth == 1 || dfuManagerConfiguration.byteAlignment != .disabled else {
-            
-            dfuManagerConfiguration.byteAlignment = FirmwareUpgradeConfiguration().byteAlignment
-            dfuByteAlignment.text = dfuManagerConfiguration.byteAlignment.description
-            
-            let alert = UIAlertController(title: "Byte Alignment Setting Changed", message: """
-            Pipelining requires a Byte Alignment setting to be applied, otherwise chunk offsets can't be predicted as more Data is sent.
-            """, preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "OK", style: .default, handler: nil))
-            present(alert)
-            return false
-        }
-        return true
-    }
-    
     private func selectMode(for package: McuMgrPackage) {
         let alertController = UIAlertController(title: "Select mode", message: nil, preferredStyle: .actionSheet)
         FirmwareUpgradeMode.allCases.forEach { upgradeMode in
-            alertController.addAction(UIAlertAction(title: upgradeMode.description, style: .default) {
+            let text = "\(upgradeMode)"
+            alertController.addAction(UIAlertAction(title: text, style: .default) {
                 action in
-                self.dfuManager!.mode = upgradeMode
+                self.dfuManagerConfiguration.upgradeMode = upgradeMode
                 self.startFirmwareUpgrade(package: package)
             })
         }
@@ -193,11 +188,29 @@ final class FirmwareUpgradeViewController: UIViewController, McuMgrViewControlle
     
     private func startFirmwareUpgrade(package: McuMgrPackage) {
         do {
+            dfuManagerConfiguration.suitMode = false
             try dfuManager.start(images: package.images, using: dfuManagerConfiguration)
         } catch {
-            print("Error reading hash: \(error)")
             status.textColor = .systemRed
-            status.text = "ERROR"
+            status.text = error.localizedDescription
+            actionStart.isEnabled = false
+        }
+    }
+    
+    private func startFirmwareUpgrade(envelope: McuMgrSuitEnvelope) {
+        do {
+            // sha256 is the currently only supported mode.
+            // The rest are optional to implement in SUIT.
+            guard let sha256Hash = envelope.digest.hash(for: .sha256) else {
+                throw McuMgrSuitParseError.supportedAlgorithmNotFound
+            }
+            
+            dfuManagerConfiguration.suitMode = true
+            dfuManagerConfiguration.upgradeMode = .uploadOnly
+            try dfuManager.start(hash: sha256Hash, data: envelope.data, using: dfuManagerConfiguration)
+        } catch {
+            status.textColor = .systemRed
+            status.text = error.localizedDescription
             actionStart.isEnabled = false
         }
     }
@@ -223,12 +236,14 @@ extension FirmwareUpgradeViewController: FirmwareUpgradeDelegate {
     }
     
     func upgradeStateDidChange(from previousState: FirmwareUpgradeState, to newState: FirmwareUpgradeState) {
-        status.textColor = .primary
+        status.textColor = .secondary
         switch newState {
         case .none:
             status.text = ""
         case .requestMcuMgrParameters:
             status.text = "REQUESTING MCUMGR PARAMETERS..."
+        case .bootloaderInfo:
+            status.text = "REQUESTING BOOTLOADER INFO..."
         case .validate:
             status.text = "VALIDATING..."
         case .upload:
@@ -275,7 +290,7 @@ extension FirmwareUpgradeViewController: FirmwareUpgradeDelegate {
         actionSelect.isEnabled = true
         eraseSwitch.isEnabled = true
         status.textColor = .systemRed
-        status.text = "\(error.localizedDescription)"
+        status.text = error.localizedDescription
         status.numberOfLines = 0
         dfuSpeed.isHidden = true
     }
@@ -335,15 +350,39 @@ extension FirmwareUpgradeViewController: UIDocumentMenuDelegate, UIDocumentPicke
     }
     
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentAt url: URL) {
+        self.package = nil
+        self.envelope = nil
+        
+        switch parseAsMcuMgrPackage(url) {
+        case .success(let package):
+            self.package = package
+        case .failure(let error):
+            if error is McuMgrPackage.Error {
+                switch parseAsSuitEnvelope(url) {
+                case .success(let envelope):
+                    self.envelope = envelope
+                case .failure(let error):
+                    onParseError(error, for: url)
+                }
+            } else {
+                onParseError(error, for: url)
+            }
+        }
+        (parent as! ImageController).innerViewReloaded()
+    }
+    
+    // MARK: - Private
+    
+    func parseAsMcuMgrPackage(_ url: URL) -> Result<McuMgrPackage, Error> {
         do {
-            package = try McuMgrPackage(from: url)
+            let package = try McuMgrPackage(from: url)
             fileName.text = url.lastPathComponent
-            fileSize.text = package?.sizeString()
+            fileSize.text = package.sizeString()
             fileSize.numberOfLines = 0
-            fileHash.text = try package?.hashString()
+            fileHash.text = try package.hashString()
             fileHash.numberOfLines = 0
             
-            status.textColor = .primary
+            status.textColor = .secondary
             status.text = "READY"
             status.numberOfLines = 0
             actionStart.isEnabled = true
@@ -352,17 +391,50 @@ extension FirmwareUpgradeViewController: UIDocumentMenuDelegate, UIDocumentPicke
             dfuSwapTime.numberOfLines = 0
             dfuNumberOfBuffers.text = dfuManagerConfiguration.pipelineDepth == 1 ? "Disabled" : "\(dfuManagerConfiguration.pipelineDepth + 1)"
             dfuNumberOfBuffers.numberOfLines = 0
-            dfuByteAlignment.text = dfuManagerConfiguration.byteAlignment.description
+            dfuByteAlignment.text = "\(dfuManagerConfiguration.byteAlignment)"
             dfuByteAlignment.numberOfLines = 0
+            
+            return .success(package)
         } catch {
-            print("Error reading hash: \(error)")
-            fileName.text = url.lastPathComponent
-            fileSize.text = ""
-            fileHash.text = ""
-            status.textColor = .systemRed
-            status.text = "Error Loading File: \(error.localizedDescription)"
-            status.numberOfLines = 0
-            actionStart.isEnabled = false
+            return .failure(error)
         }
+    }
+    
+    func parseAsSuitEnvelope(_ url: URL) -> Result<McuMgrSuitEnvelope, Error> {
+        do {
+            let envelope = try McuMgrSuitEnvelope(from: url)
+            fileName.text = url.lastPathComponent
+            fileSize.text = envelope.sizeString()
+            fileSize.numberOfLines = 0
+            fileHash.text = envelope.digest.hashString()
+            fileHash.numberOfLines = 0
+            
+            status.textColor = .secondary
+            status.text = "READY"
+            status.numberOfLines = 0
+            actionStart.isEnabled = true
+            
+            dfuSwapTime.text = "\(dfuManagerConfiguration.estimatedSwapTime)s"
+            dfuSwapTime.numberOfLines = 0
+            dfuNumberOfBuffers.text = dfuManagerConfiguration.pipelineDepth == 1 ? "Disabled" : "\(dfuManagerConfiguration.pipelineDepth + 1)"
+            dfuNumberOfBuffers.numberOfLines = 0
+            dfuByteAlignment.text = "\(dfuManagerConfiguration.byteAlignment)"
+            dfuByteAlignment.numberOfLines = 0
+            return .success(envelope)
+        } catch {
+            return .failure(error)
+        }
+    }
+    
+    func onParseError(_ error: Error, for url: URL) {
+        self.package = nil
+        envelope = nil
+        fileName.text = url.lastPathComponent
+        fileSize.text = ""
+        fileHash.text = ""
+        status.textColor = .systemRed
+        status.text = error.localizedDescription
+        status.numberOfLines = 0
+        actionStart.isEnabled = false
     }
 }

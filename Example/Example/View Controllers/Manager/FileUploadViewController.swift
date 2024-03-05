@@ -72,13 +72,23 @@ class FileUploadViewController: UIViewController, McuMgrViewController {
             ?? FilesController.defaultPartition
     }
     
+    private var uploadTimestamp: Date!
+    private var uploadImageSize: Int!
+    private var initialBytes: Int!
+    
     private func refreshDestination() {
         if let _ = fileData {
             destination.text = "/\(partition)/\(fileName.text!)"
         }
     }
     
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.translatesAutoresizingMaskIntoConstraints = false
+    }
+    
     override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
         refreshDestination()
     }
 }
@@ -86,6 +96,25 @@ class FileUploadViewController: UIViewController, McuMgrViewController {
 extension FileUploadViewController: FileUploadDelegate {
     
     func uploadProgressDidChange(bytesSent: Int, fileSize: Int, timestamp: Date) {
+        if uploadImageSize == nil || uploadImageSize != fileSize {
+            uploadTimestamp = timestamp
+            uploadImageSize = fileSize
+            initialBytes = bytesSent
+        }
+        
+        // Date.timeIntervalSince1970 returns seconds
+        let msSinceUploadBegan = max((timestamp.timeIntervalSince1970 - uploadTimestamp.timeIntervalSince1970) * 1000, 1)
+        let speedInKiloBytesPerSecond: Double
+        if bytesSent < fileSize {
+            let bytesSentSinceUploadBegan = bytesSent - initialBytes
+            // bytes / ms = kB/s
+            speedInKiloBytesPerSecond = Double(bytesSentSinceUploadBegan) / msSinceUploadBegan
+        } else {
+            // bytes / ms = kB/s
+            speedInKiloBytesPerSecond = Double(fileSize - initialBytes) / msSinceUploadBegan
+        }
+        
+        status.text = "UPLOADING... (\(String(format: "%.2f", speedInKiloBytesPerSecond))) kB/s)"
         progress.setProgress(Float(bytesSent) / Float(fileSize), animated: true)
     }
     
@@ -97,7 +126,7 @@ extension FileUploadViewController: FileUploadDelegate {
         actionStart.isHidden = false
         actionSelect.isEnabled = true
         status.textColor = .systemRed
-        status.text = "\(error.localizedDescription)"
+        status.text = error.localizedDescription
     }
     
     func uploadDidCancel() {
@@ -107,7 +136,7 @@ extension FileUploadViewController: FileUploadDelegate {
         actionCancel.isHidden = true
         actionStart.isHidden = false
         actionSelect.isEnabled = true
-        status.textColor = .primary
+        status.textColor = .secondary
         status.text = "CANCELLED"
     }
     
@@ -119,7 +148,7 @@ extension FileUploadViewController: FileUploadDelegate {
         actionStart.isHidden = false
         actionStart.isEnabled = false
         actionSelect.isEnabled = true
-        status.textColor = .primary
+        status.textColor = .secondary
         status.text = "UPLOAD COMPLETE"
         fileData = nil
     }
@@ -143,7 +172,7 @@ extension FileUploadViewController: UIDocumentMenuDelegate, UIDocumentPickerDele
             fileSize.text = "\(data.count) bytes"
             refreshDestination()
             
-            status.textColor = .primary
+            status.textColor = .secondary
             status.text = "READY"
             actionStart.isEnabled = true
         }
@@ -154,9 +183,8 @@ extension FileUploadViewController: UIDocumentMenuDelegate, UIDocumentPickerDele
         do {
             return try Data(contentsOf: url)
         } catch {
-            print("Error reading file: \(error)")
             status.textColor = .systemRed
-            status.text = "COULD NOT OPEN FILE"
+            status.text = error.localizedDescription
             return nil
         }
     }
