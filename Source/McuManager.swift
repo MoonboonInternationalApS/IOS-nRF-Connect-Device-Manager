@@ -336,7 +336,7 @@ public enum McuMgrGroup {
     /// Computed property to retrieve the raw value for each group.
     var rawValue: UInt16 {
         switch self {
-        case .os: return 0
+        case .OS: return 0
         case .image: return 1
         case .statistics: return 2
         case .settings: return 3
@@ -355,7 +355,7 @@ public enum McuMgrGroup {
     
     init (rawValue: UInt16) {
         switch rawValue {
-        case 0: self = .os
+        case 0: self = .OS
         case 1: self = .image
         case 2: self = .statistics
         case 3: self = .settings
