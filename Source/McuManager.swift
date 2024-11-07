@@ -307,7 +307,7 @@ public enum McuManagerError: Error, LocalizedError {
 /// and functions. The default are contained within the McuManager class.
 public enum McuMgrGroup {
     /// Default command group (DefaultManager).
-    case os
+    case OS
     /// Image command group (ImageManager).
     case image
     /// Statistics command group (StatsManager).
