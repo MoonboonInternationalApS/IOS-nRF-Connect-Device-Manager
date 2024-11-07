@@ -305,40 +305,82 @@ public enum McuManagerError: Error, LocalizedError {
 ///
 /// Each group has its own manager class which contains the specific subcommands
 /// and functions. The default are contained within the McuManager class.
-public enum McuMgrGroup: UInt16 {
+public enum McuMgrGroup {
     /// Default command group (DefaultManager).
-    case OS = 0
+    case os
     /// Image command group (ImageManager).
-    case image = 1
+    case image
     /// Statistics command group (StatsManager).
-    case statistics = 2
+    case statistics
     /// System configuration command group (SettingsManager).
-    case settings = 3
+    case settings
     /// Log command group (LogManager).
-    case logs = 4
+    case logs
     /// Crash command group (CrashManager).
-    case crash = 5
+    case crash
     /// Split image command group (Not implemented).
-    case split = 6
+    case split
     /// Run test command group (RunManager).
-    case run = 7
+    case run
     /// File System command group (FileSystemManager).
-    case filesystem = 8
+    case filesystem
     /// Shell Command Group (ShellManager).
-    case shell = 9
-    /// Per user command group, value must be >= 64.
-    case perUser = 64
+    case shell
+    /// Per user command group default
+    case perUser
     /// SUIT Command Group (SuitManager).
-    case suit = 66
+    case suit
+    /// Per user command group, value must be >= 64.
+    case custom(UInt16)
     
-    /** 
+    /// Computed property to retrieve the raw value for each group.
+    var rawValue: UInt16 {
+        switch self {
+        case .os: return 0
+        case .image: return 1
+        case .statistics: return 2
+        case .settings: return 3
+        case .logs: return 4
+        case .crash: return 5
+        case .split: return 6
+        case .run: return 7
+        case .filesystem: return 8
+        case .shell: return 9
+        case .perUser: return 64
+        case .suit: return 66
+        case .basic: return 63
+        case .custom(let value): return value
+        }
+    }
+    
+    init (rawValue: UInt16) {
+        switch rawValue {
+        case 0: self = .os
+        case 1: self = .image
+        case 2: self = .statistics
+        case 3: self = .settings
+        case 4: self = .logs
+        case 5: self = .crash
+        case 6: self = .split
+        case 7: self = .run
+        case 8: self = .filesystem
+        case 9: self = .shell
+        case 64: self = .perUser
+        case 66: self = .suit
+        default:
+            self = .custom(rawValue)
+        }
+    }
+    
+    /**
      * Basic command group (BasicManager).
      *
      * Zephyr-specific groups decrease from PERUSER to avoid collision with upstream and
      * user-defined groups.
      */
-    case basic = 63 // PerUser - 1
+    case basic
 }
+
 
 // MARK: - McuMgrVersion
 
